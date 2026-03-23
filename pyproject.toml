@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "json-schema2salad"
+dynamic = ["version"]
+description = 'A simple CLI tool to convert JSON Schema instances to Salad schemas'
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "Terradue", email = "simone.tripodi@terradue.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "click==8.3.1",
+  "httpx==0.28.1",
+  "jsonref==1.1.0",
+  "jsonpointer==3.0.0",
+  "loguru==0.7.3",
+  "pydantic==2.12.5",
+  "typing_extensions>=4.0",
+  "PyYAML==6.0.3"
+]
+
+[project.urls]
+Documentation = "https://github.com/Terradue/json-schema2salad#readme"
+Issues = "https://github.com/Terradue/json-schema2salad/issues"
+Source = "https://github.com/Terradue/json-schema2salad"
+
+[project.scripts]
+json-schema2salad = "json_schema2salad.cli:main"
+
+[tool.hatch.version]
+path = "src/json_schema2salad/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/json_schema2salad tests}"
+
+[tool.coverage.run]
+source_pkgs = ["json_schema2salad", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/json_schema2salad/__about__.py",
+]
+
+[tool.coverage.paths]
+json_schema2salad = ["src/json_schema2salad", "*/json-schema2salad/src/json_schema2salad"]
+tests = ["tests", "*/json-schema2salad/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]

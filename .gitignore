@@ -1,0 +1,13 @@
+.project
+.pydevproject
+.settings
+.task
+.venv
+build
+dist
+*.egg-info
+__pycache__
+tests/*/current.*
+tests/*/*.puml
+/.pytest_cache/
+docs/api
