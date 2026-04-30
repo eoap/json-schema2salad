@@ -15,78 +15,56 @@
 from __future__ import annotations
 
 from datetime import datetime
-from httpx import Client
-from json_schema2salad import convert_json_schema_to_salad
-from json_schema2salad.models import SaladDocument
-from jsonref import load_uri
+from json_schema2salad.utils import InlineSchemaMerger, normalize_source_uri
 from loguru import logger
 from pathlib import Path
 
 import click
-import json
 import time
-import yaml
-
-
-def httpx_json_loader(uri: str, **kwargs: object) -> object:
-    with Client(follow_redirects=True) as client:
-        response = client.get(uri)
-        response.raise_for_status()
-        return json.loads(response.text, **kwargs)
 
 
 @click.command(context_settings={"show_default": True})
 @click.argument(
-    "source",
+    "sources",
+    nargs=-1,
     type=click.STRING,
     required=True,
 )
 @click.option(
     "--output",
-    type=click.Path(path_type=Path),
+    type=click.Path(path_type=Path, file_okay=True, dir_okay=False),
     required=True,
-    help="The output file path",
+    help="The final output file path",
 )
 def main(
-    source: str,
+    sources: tuple[str, ...],
     output: Path,
 ):
     """
-    Transpiles the input JSON Schema to Schema Salad.
+    Transpiles one or more JSON Schemas into a single Schema Salad document.
     """
     start_time = time.time()
 
     try:
-        logger.info(f"Reading JSON Schema from {source}...")
+        normalized_sources = [normalize_source_uri(source) for source in sources]
+        for source in normalized_sources:
+            logger.info(f"Reading JSON Schema from {source}...")
+        logger.info("Transpiling JSON Schemas and recursively inlining referenced schemas...")
 
-        resolved = load_uri(
-            uri=source,
-            loader=httpx_json_loader,
-            jsonschema=True,
-            proxies=False,
-            lazy_load=False,
-            merge_props=True
-        )
-
-        if not isinstance(resolved, dict):
-            raise TypeError("Resolved schema root must be a JSON object")
-
-        schema_salad, warnings = convert_json_schema_to_salad(resolved)
-
-        if warnings:
-            for warning in warnings:
-                logger.warning(warning)
-
-        logger.success("JSON Schema successfully transpiled to Schema Salad!")
-        logger.info("Serializing Schema Salad...")
         output.parent.mkdir(parents=True, exist_ok=True)
-        with output.open("w") as output_stream:
-            yaml.dump(schema_salad.as_salad(), output_stream, sort_keys=False)
+        logger.info(f"Merged Schema Salad will be serialized to {output.resolve()}")
+
+        merger = InlineSchemaMerger(output)
+        merger.emit(normalized_sources)
+
+        if merger.warnings:
+            for warning in merger.warnings:
+                logger.warning(warning)
 
         logger.success(
             "------------------------------------------------------------------------"
         )
-        logger.success(f"SUCCESS Schema Salad successfully serialized to {output.absolute()}.")
+        logger.success(f"SUCCESS Schema Salad(s) successfully serialized to {output.resolve()}.")
         logger.success(
             "------------------------------------------------------------------------"
         )

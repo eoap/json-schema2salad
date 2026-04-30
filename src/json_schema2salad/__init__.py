@@ -17,10 +17,14 @@ Convert JSON Schema to a practical subset of Schema Salad using Pydantic v2.
 
 Supported features:
 - description/title -> doc fallback
+- field and enum docs enriched with example values
+- root type names can derive from source hints to avoid ambiguous generic names
 - optional input schema validation via jsonschema
 - local $ref resolution for #/$defs/... and #/definitions/...
+- external $ref handling via caller-provided recursive resolvers
 - object properties / required
 - primitive types
+- known string formats -> EOAP string_format Salad references
 - nullable unions
 - array.items
 - enum
@@ -32,21 +36,20 @@ Supported features:
 
 Limitations:
 - This is not a full semantic-preserving converter.
-- JSON Schema validation keywords like minimum, maximum, pattern, format,
+- JSON Schema validation keywords like minimum, maximum, pattern,
   dependentRequired, unevaluatedProperties, etc. are not preserved.
 - oneOf is mapped to a structural union, not strict exclusivity.
 - allOf is handled for object-like schemas; other compositions may degrade to Any.
-- External refs are not fetched automatically.
+- External refs are only materialized when the caller provides a resolver.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from json_schema2salad.models import ArrayType, EnumType, RecordField, RecordType, SaladDocument
-from jsonpointer import JsonPointer
-from pathlib import Path
-from pydantic import AnyUrl, BaseModel
-from typing import Any, Dict, List, Optional
+from pydantic import BaseModel
+from typing import Any, Callable, Dict, List, Optional
 
 import json
 import re
@@ -59,6 +62,34 @@ PRIMITIVE_MAP = {
     "boolean": "boolean",
     "null": "null",
 }
+
+STRING_FORMAT_SCHEMA_URI = (
+    "https://raw.githubusercontent.com/eoap/schemas/refs/heads/main/string_format.yaml"
+)
+
+STRING_FORMAT_RECORDS = {
+    "date": "Date",
+    "date-time": "DateTime",
+    "duration": "Duration",
+    "email": "Email",
+    "hostname": "Hostname",
+    "idn-email": "IDNEmail",
+    "idn-hostname": "IDNHostname",
+    "ipv4": "IPv4",
+    "ipv6": "IPv6",
+    "iri": "IRI",
+    "iri-reference": "IRIReference",
+    "json-pointer": "JsonPointer",
+    "password": "Password",
+    "relative-json-pointer": "RelativeJsonPointer",
+    "uuid": "UUID",
+    "uri": "URI",
+    "uri-reference": "URIReference",
+    "uri-template": "URITemplate",
+    "time": "Time",
+}
+
+GENERIC_ROOT_TITLES = {"root"}
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +150,92 @@ def schema_doc(schema: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def schema_example_text(schema: Dict[str, Any]) -> Optional[str]:
+    if "example" not in schema:
+        return None
+
+    example = schema["example"]
+    if example is None:
+        return None
+
+    if isinstance(example, str):
+        example_text = example.strip()
+        return example_text or None
+
+    try:
+        return json.dumps(example, sort_keys=True)
+    except TypeError:
+        return str(example)
+
+
+def schema_doc_with_example(schema: Dict[str, Any]) -> Optional[str]:
+    description = schema.get("description")
+    if isinstance(description, str) and description.strip():
+        example_text = schema_example_text(schema)
+        if example_text:
+            return f"{description.strip()}\n\nExample: {example_text}"
+        return description.strip()
+
+    example_text = schema_example_text(schema)
+    if example_text:
+        return f"Example: {example_text}"
+
+    title = schema.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+
+    return None
+
+
+def string_format_type(schema: Dict[str, Any], ctx: "ConversionContext") -> str:
+    format_name = schema.get("format")
+    if isinstance(format_name, str):
+        record_name = STRING_FORMAT_RECORDS.get(format_name)
+        if record_name:
+            ctx.import_schema(STRING_FORMAT_SCHEMA_URI)
+            return f"{STRING_FORMAT_SCHEMA_URI}#{record_name}"
+    return PRIMITIVE_MAP["string"]
+
+
+def primitive_type_to_salad(json_type: str, schema: Dict[str, Any], ctx: "ConversionContext") -> str:
+    if json_type == "string":
+        return string_format_type(schema, ctx)
+    return PRIMITIVE_MAP[json_type]
+
+
+def schema_title_name(schema: Dict[str, Any]) -> Optional[str]:
+    title = schema.get("title")
+    if isinstance(title, str) and title.strip():
+        return safe_name(title.strip())
+    return None
+
+
+def preferred_record_name(schema: Dict[str, Any], fallback: str) -> str:
+    return schema_title_name(schema) or fallback
+
+
+def inline_record_identity_key(schema: Dict[str, Any]) -> str | None:
+    title_name = schema_title_name(schema)
+    if not title_name:
+        return None
+    return stable_key(schema)
+
+
+def preferred_root_name(schema: Dict[str, Any], root_name_hint: str | None = None) -> str:
+    title_name = schema_title_name(schema)
+    if title_name:
+        if title_name.lower() not in GENERIC_ROOT_TITLES:
+            return title_name
+        if root_name_hint:
+            return to_camel_case(root_name_hint)
+        return title_name
+
+    if root_name_hint:
+        return to_camel_case(root_name_hint)
+
+    return "Root"
+
+
 def is_object_like(schema: Dict[str, Any]) -> bool:
     if "$ref" in schema:
         return True
@@ -138,29 +255,88 @@ def merge_descriptions(parts: List[Optional[str]]) -> Optional[str]:
     return "\n\n".join(dict.fromkeys(clean))
 
 
+def json_pointer_parts(fragment: str) -> List[str]:
+    if not fragment:
+        return []
+    if not fragment.startswith("/"):
+        raise ValueError(f"Unsupported JSON Pointer fragment: {fragment!r}")
+    return [
+        part.replace("~1", "/").replace("~0", "~")
+        for part in fragment[1:].split("/")
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Conversion context
 # ---------------------------------------------------------------------------
 
 class ConversionContext:
-    def __init__(self, root_schema: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        root_schema: Dict[str, Any],
+        *,
+        base_uri: str | None = None,
+        external_ref_handler: Callable[[str, "ConversionContext"], str] | None = None,
+        reserved_names: set[str] | None = None,
+        source_ref_to_name: dict[str, str] | None = None,
+    ) -> None:
         self.root_schema = root_schema
+        self.base_uri = base_uri
+        self.external_ref_handler = external_ref_handler
         self.types: List[EnumType | RecordType] = []
-        self.emitted_names: set[str] = set()
+        self.emitted_names: set[str] = set(reserved_names or set())
         self.ref_map: Dict[str, str] = {}
+        self.source_ref_to_name: dict[str, str] = dict(source_ref_to_name or {})
+        self.inline_record_key_to_name: dict[str, str] = {}
+        self.imported_schemas: set[str] = set()
         self.warnings: List[str] = []
 
-    def reserve_name(self, preferred: str) -> str:
+    def json_ref_source(self, ref: str | None = None) -> str | None:
+        if self.base_uri is None:
+            return None
+        if not ref:
+            return self.base_uri
+        if ref.startswith("#"):
+            return f"{self.base_uri}{ref}"
+        return ref
+
+    def reserve_name(self, preferred: str, source_ref: str | None = None) -> str:
+        if source_ref and source_ref in self.source_ref_to_name:
+            existing_name = self.source_ref_to_name[source_ref]
+            self.emitted_names.add(existing_name)
+            return existing_name
+
         base = safe_name(preferred)
         if base not in self.emitted_names:
             self.emitted_names.add(base)
+            if source_ref:
+                self.source_ref_to_name[source_ref] = base
             return base
         i = 2
         while f"{base}{i}" in self.emitted_names:
             i += 1
         final_name = f"{base}{i}"
         self.emitted_names.add(final_name)
+        if source_ref:
+            self.source_ref_to_name[source_ref] = final_name
         return final_name
+
+    def reserve_record_name(
+        self,
+        schema: Dict[str, Any],
+        fallback: str,
+        source_ref: str | None = None,
+    ) -> str:
+        inline_key = None if source_ref else inline_record_identity_key(schema)
+        if inline_key and inline_key in self.inline_record_key_to_name:
+            existing_name = self.inline_record_key_to_name[inline_key]
+            self.emitted_names.add(existing_name)
+            return existing_name
+
+        record_name = self.reserve_name(preferred_record_name(schema, fallback), source_ref=source_ref)
+        if inline_key:
+            self.inline_record_key_to_name[inline_key] = record_name
+        return record_name
 
     def add_type(self, type_def: EnumType | RecordType) -> None:
         if self.get_type(type_def.name) is None:
@@ -176,19 +352,89 @@ class ConversionContext:
         if message not in self.warnings:
             self.warnings.append(message)
 
+    def import_schema(self, schema_uri: str) -> None:
+        self.imported_schemas.add(schema_uri)
+
+
+@dataclass(frozen=True)
+class ConversionPlan:
+    root_name: str
+    ref_map: Dict[str, str]
+    source_ref_map: Dict[str, str]
+
+
+@dataclass(frozen=True)
+class ConvertedSchema:
+    document: SaladDocument
+    warnings: List[str]
+    root_name: str
+    ref_map: Dict[str, str]
+    source_ref_map: Dict[str, str]
+
 
 def ref_name_from_json_pointer(ref: str, ctx: ConversionContext) -> str:
     if ref not in ctx.ref_map:
-        if not ref.startswith("#"):
-            suggested = to_camel_case(ref)
-        else:
-            fragment = ref[1:]
-            pointer = JsonPointer(fragment)
-            parts = pointer.get_parts()
-            suggested = to_camel_case("_".join(str(part) for part in parts)) if parts else "Root"
-
-        ctx.ref_map[ref] = ctx.reserve_name(suggested)
+        source_ref = ctx.json_ref_source(ref)
+        ctx.ref_map[ref] = ctx.reserve_name(suggested_name_from_ref(ref), source_ref=source_ref)
     return ctx.ref_map[ref]
+
+
+def suggested_name_from_ref(ref: str) -> str:
+    if not ref.startswith("#"):
+        return to_camel_case(ref)
+
+    fragment = ref[1:]
+    parts = json_pointer_parts(fragment)
+    return to_camel_case("_".join(str(part) for part in parts)) if parts else "Root"
+
+
+def predeclare_defs(schema: Dict[str, Any], ctx: ConversionContext) -> None:
+    for bucket_name, ref_prefix in (("$defs", "#/$defs/"), ("definitions", "#/definitions/")):
+        defs = schema.get(bucket_name, {})
+        for def_name, def_schema in defs.items():
+            ref = f"{ref_prefix}{def_name}"
+            source_ref = ctx.json_ref_source(ref)
+            if is_object_like(def_schema):
+                ctx.ref_map[ref] = ctx.reserve_name(
+                    preferred_record_name(def_schema, suggested_name_from_ref(ref)),
+                    source_ref=source_ref,
+                )
+            else:
+                ref_name_from_json_pointer(ref, ctx)
+
+
+def plan_conversion_names(
+    schema: Dict[str, Any],
+    *,
+    base_uri: str | None = None,
+    root_name_hint: str | None = None,
+    reserved_names: set[str] | None = None,
+    source_ref_to_name: dict[str, str] | None = None,
+) -> ConversionPlan:
+    ctx = ConversionContext(
+        schema,
+        base_uri=base_uri,
+        reserved_names=reserved_names,
+        source_ref_to_name=source_ref_to_name,
+    )
+    predeclare_defs(schema, ctx)
+    root_name = ctx.reserve_name(
+        preferred_root_name(schema, root_name_hint),
+        source_ref=ctx.json_ref_source(),
+    )
+    return ConversionPlan(
+        root_name=root_name,
+        ref_map=dict(ctx.ref_map),
+        source_ref_map=dict(ctx.source_ref_to_name),
+    )
+
+
+def resolve_ref_name(ref: str, ctx: ConversionContext) -> str:
+    if ref.startswith("#"):
+        return ref_name_from_json_pointer(ref, ctx)
+    if ctx.external_ref_handler is not None:
+        return ctx.external_ref_handler(ref, ctx)
+    return ref_name_from_json_pointer(ref, ctx)
 
 
 def convert_union_variants(
@@ -238,7 +484,12 @@ def merge_object_schemas(schemas: List[Dict[str, Any]]) -> Dict[str, Any]:
     return merged
 
 
-def materialize_allof_record(schema: Dict[str, Any], ctx: ConversionContext, record_name: str) -> str:
+def materialize_allof_record(
+    schema: Dict[str, Any],
+    ctx: ConversionContext,
+    record_name: str,
+    source_ref: str | None = None,
+) -> str:
     branches = schema.get("allOf", [])
     ref_bases: List[str] = []
     inline_objects: List[Dict[str, Any]] = []
@@ -248,13 +499,13 @@ def materialize_allof_record(schema: Dict[str, Any], ctx: ConversionContext, rec
         descriptions.append(schema_doc(branch))
 
         if "$ref" in branch:
-            ref_name = ref_name_from_json_pointer(branch["$ref"], ctx)
+            ref_name = resolve_ref_name(branch["$ref"], ctx)
             ref_bases.append(ref_name)
             continue
 
         if is_object_like(branch):
             if "allOf" in branch:
-                nested_name = ctx.reserve_name(f"{record_name}_Base")
+                nested_name = ctx.reserve_record_name(branch, f"{record_name}_Base")
                 materialize_allof_record(branch, ctx, nested_name)
                 ref_bases.append(nested_name)
             else:
@@ -263,6 +514,7 @@ def materialize_allof_record(schema: Dict[str, Any], ctx: ConversionContext, rec
 
         fallback = RecordType(
             name=record_name,
+            json_ref_source=source_ref,
             doc=merge_descriptions(descriptions),
             fields=[RecordField(name="value", type="Any", doc="Lossy fallback for unsupported allOf branch composition.")],
         )
@@ -278,6 +530,7 @@ def materialize_allof_record(schema: Dict[str, Any], ctx: ConversionContext, rec
 
     record = RecordType(
         name=record_name,
+        json_ref_source=source_ref,
         doc=merge_descriptions(descriptions + [schema_doc(merged_inline)]),
         extends=ref_bases if len(ref_bases) > 1 else (ref_bases[0] if ref_bases else None),
         fields=[],
@@ -293,7 +546,7 @@ def materialize_allof_record(schema: Dict[str, Any], ctx: ConversionContext, rec
 
 def convert_type(schema: Dict[str, Any], ctx: ConversionContext, parent_name: str, field_name: Optional[str] = None) -> Any:
     if "$ref" in schema:
-        return ref_name_from_json_pointer(schema["$ref"], ctx)
+        return resolve_ref_name(schema["$ref"], ctx)
 
     if "oneOf" in schema:
         return convert_union_variants(schema["oneOf"], ctx, parent_name, field_name)
@@ -302,13 +555,19 @@ def convert_type(schema: Dict[str, Any], ctx: ConversionContext, parent_name: st
         return convert_union_variants(schema["anyOf"], ctx, parent_name, field_name)
 
     if "allOf" in schema:
-        nested_name = ctx.reserve_name(f"{parent_name}_{field_name or 'Composed'}")
+        nested_name = ctx.reserve_record_name(schema, f"{parent_name}_{field_name or 'Composed'}")
         materialize_allof_record(schema, ctx, nested_name)
         return nested_name
 
     if "enum" in schema:
         enum_name = ctx.reserve_name(f"{parent_name}_{field_name or 'Enum'}")
-        ctx.add_type(EnumType(name=enum_name, symbols=[str(v) for v in schema["enum"]], doc=schema_doc(schema)))
+        ctx.add_type(
+            EnumType(
+                name=enum_name,
+                symbols=[str(v) for v in schema["enum"]],
+                doc=schema_doc_with_example(schema),
+            )
+        )
         return enum_name
 
     schema_type = schema.get("type")
@@ -317,9 +576,9 @@ def convert_type(schema: Dict[str, Any], ctx: ConversionContext, parent_name: st
         converted: List[Any] = []
         for t in schema_type:
             if isinstance(t, str) and t in PRIMITIVE_MAP:
-                converted.append(PRIMITIVE_MAP[t])
+                converted.append(primitive_type_to_salad(t, schema, ctx))
             elif t == "object":
-                nested_name = ctx.reserve_name(f"{parent_name}_{field_name or 'Nested'}")
+                nested_name = ctx.reserve_record_name(schema, f"{parent_name}_{field_name or 'Nested'}")
                 emit_record(schema, ctx, nested_name)
                 converted.append(nested_name)
             elif t == "array":
@@ -331,20 +590,20 @@ def convert_type(schema: Dict[str, Any], ctx: ConversionContext, parent_name: st
         return dedupe_types(converted)
 
     if schema_type in PRIMITIVE_MAP:
-        return PRIMITIVE_MAP[schema_type]
+        return primitive_type_to_salad(schema_type, schema, ctx)
 
     if schema_type == "array":
         items = schema.get("items", {})
         return ArrayType(items=convert_type(items, ctx, parent_name, field_name))
 
     if schema_type == "object" or "properties" in schema:
-        nested_name = ctx.reserve_name(f"{parent_name}_{field_name or 'Nested'}")
+        nested_name = ctx.reserve_record_name(schema, f"{parent_name}_{field_name or 'Nested'}")
         emit_record(schema, ctx, nested_name)
         return nested_name
 
     if schema_type is None:
         if "properties" in schema:
-            nested_name = ctx.reserve_name(f"{parent_name}_{field_name or 'Nested'}")
+            nested_name = ctx.reserve_record_name(schema, f"{parent_name}_{field_name or 'Nested'}")
             emit_record(schema, ctx, nested_name)
             return nested_name
         if "items" in schema:
@@ -362,25 +621,30 @@ def make_field(field_name: str, field_schema: Dict[str, Any], required: bool, ct
     kwargs: dict[str, Any] = {
         "name": safe_name(field_name),
         "type": field_type,
-        "doc": schema_doc(field_schema),
+        "doc": schema_doc_with_example(field_schema),
     }
     if "default" in field_schema:
         kwargs["default"] = field_schema["default"]
     return RecordField(**kwargs)
 
 
-def emit_record(schema: Dict[str, Any], ctx: ConversionContext, record_name: str) -> None:
+def emit_record(
+    schema: Dict[str, Any],
+    ctx: ConversionContext,
+    record_name: str,
+    source_ref: str | None = None,
+) -> None:
     if ctx.get_type(record_name):
         return
 
     if "allOf" in schema:
-        materialize_allof_record(schema, ctx, record_name)
+        materialize_allof_record(schema, ctx, record_name, source_ref=source_ref)
         return
 
     properties = schema.get("properties", {})
     required_fields = set(schema.get("required", []))
 
-    record = RecordType(name=record_name, doc=schema_doc(schema), fields=[])
+    record = RecordType(name=record_name, json_ref_source=source_ref, doc=schema_doc(schema), fields=[])
     for prop_name, prop_schema in properties.items():
         record.fields.append(make_field(prop_name, prop_schema, prop_name in required_fields, ctx, record_name))
     ctx.add_type(record)
@@ -390,11 +654,20 @@ def emit_defs(schema: Dict[str, Any], ctx: ConversionContext) -> None:
     for bucket_name, ref_prefix in (("$defs", "#/$defs/"), ("definitions", "#/definitions/")):
         defs = schema.get(bucket_name, {})
         for def_name, def_schema in defs.items():
-            salad_name = ref_name_from_json_pointer(f"{ref_prefix}{def_name}", ctx)
+            ref = f"{ref_prefix}{def_name}"
+            source_ref = ctx.json_ref_source(ref)
+            salad_name = ref_name_from_json_pointer(ref, ctx)
             if def_schema.get("type") == "object" or "properties" in def_schema or "allOf" in def_schema:
-                emit_record(def_schema, ctx, salad_name)
+                emit_record(def_schema, ctx, salad_name, source_ref=source_ref)
             elif "enum" in def_schema:
-                ctx.add_type(EnumType(name=salad_name, symbols=[str(v) for v in def_schema["enum"]], doc=schema_doc(def_schema)))
+                ctx.add_type(
+                    EnumType(
+                        name=salad_name,
+                        symbols=[str(v) for v in def_schema["enum"]],
+                        doc=schema_doc_with_example(def_schema),
+                        json_ref_source=source_ref,
+                    )
+                )
             else:
                 wrapped = {
                     "type": "object",
@@ -402,16 +675,44 @@ def emit_defs(schema: Dict[str, Any], ctx: ConversionContext) -> None:
                     "required": ["value"],
                     "description": def_schema.get("description", def_schema.get("title", f"Wrapped definition for {def_name}")),
                 }
-                emit_record(wrapped, ctx, salad_name)
+                emit_record(wrapped, ctx, salad_name, source_ref=source_ref)
 
 
 def convert_json_schema_to_salad(schema: Dict[str, Any]) -> tuple[SaladDocument, List[str]]:
-    ctx = ConversionContext(schema)
+    converted = convert_json_schema_to_salad_details(schema)
+    return converted.document, converted.warnings
+
+
+def convert_json_schema_to_salad_details(
+    schema: Dict[str, Any],
+    *,
+    base_uri: str | None = None,
+    external_ref_handler: Callable[[str, ConversionContext], str] | None = None,
+    plan: ConversionPlan | None = None,
+    reserved_names: set[str] | None = None,
+    source_ref_to_name: dict[str, str] | None = None,
+) -> ConvertedSchema:
+    active_plan = plan or plan_conversion_names(
+        schema,
+        base_uri=base_uri,
+        reserved_names=reserved_names,
+        source_ref_to_name=source_ref_to_name,
+    )
+    ctx = ConversionContext(
+        schema,
+        base_uri=base_uri,
+        external_ref_handler=external_ref_handler,
+        reserved_names=reserved_names,
+        source_ref_to_name=active_plan.source_ref_map,
+    )
+    ctx.ref_map.update(active_plan.ref_map)
+    ctx.emitted_names.update(active_plan.ref_map.values())
+    ctx.emitted_names.add(active_plan.root_name)
+
     emit_defs(schema, ctx)
 
-    root_name = ctx.reserve_name(to_camel_case(schema.get("title", "Root")))
     if schema.get("type") == "object" or "properties" in schema or "allOf" in schema:
-        emit_record(schema, ctx, root_name)
+        emit_record(schema, ctx, active_plan.root_name, source_ref=ctx.json_ref_source())
     else:
         wrapped_root = {
             "type": "object",
@@ -419,14 +720,20 @@ def convert_json_schema_to_salad(schema: Dict[str, Any]) -> tuple[SaladDocument,
             "required": ["value"],
             "description": schema.get("description", schema.get("title", "Wrapped non-object root schema")),
         }
-        emit_record(wrapped_root, ctx, root_name)
+        emit_record(wrapped_root, ctx, active_plan.root_name, source_ref=ctx.json_ref_source())
 
-    doc = SaladDocument(
+    document = SaladDocument(
         **{
-            "$base": "https://example.org/",
             "$namespaces": {"sld": "https://w3id.org/cwl/salad#"},
+            "$schemas": sorted(ctx.imported_schemas) if ctx.imported_schemas else None,
             "$graph": ctx.types,
             "$comment": ("Warnings: " + " | ".join(ctx.warnings)) if ctx.warnings else None,
         }
     )
-    return doc, ctx.warnings
+    return ConvertedSchema(
+        document=document,
+        warnings=ctx.warnings,
+        root_name=active_plan.root_name,
+        ref_map=dict(ctx.ref_map),
+        source_ref_map=dict(ctx.source_ref_to_name),
+    )

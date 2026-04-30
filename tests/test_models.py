@@ -98,6 +98,18 @@ class RecordTypeTests(unittest.TestCase):
             record.as_salad(),
         )
 
+    def test_json_ref_source_is_kept_internal(self) -> None:
+        record = RecordType(
+            name='ExampleRecord',
+            json_ref_source='file:///schemas/example.json#/$defs/ExampleRecord',
+        )
+
+        self.assertEqual(
+            'file:///schemas/example.json#/$defs/ExampleRecord',
+            record.json_ref_source,
+        )
+        self.assertNotIn('json_ref_source', record.as_salad())
+
 
 class EnumAndArrayTypeTests(unittest.TestCase):
     def test_enum_and_array_models_support_recursive_type_expression(self) -> None:
@@ -109,27 +121,51 @@ class EnumAndArrayTypeTests(unittest.TestCase):
             array_type.as_salad(),
         )
 
+    def test_enum_json_ref_source_is_kept_internal(self) -> None:
+        enum_type = EnumType(
+            name='Status',
+            symbols=['open', 'closed'],
+            json_ref_source='file:///schemas/example.json#/$defs/Status',
+        )
+
+        self.assertEqual(
+            'file:///schemas/example.json#/$defs/Status',
+            enum_type.json_ref_source,
+        )
+        self.assertNotIn('json_ref_source', enum_type.as_salad())
+
 
 class SaladDocumentTests(unittest.TestCase):
     def test_add_appends_graph_entries_and_serializes_document_aliases(self) -> None:
         enum_type = EnumType(name='Status', symbols=['open', 'closed'])
         record_type = RecordType(name='ExampleRecord')
-        document = SaladDocument(**{'$base': 'https://example.org/', '$namespaces': {'ex': 'https://example.org/ns#'}})
+        document = SaladDocument(
+            **{
+                '$namespaces': {'ex': 'https://example.org/ns#'},
+                '$schemas': ['https://example.org/schema.yaml'],
+            }
+        )
 
         returned = document.add(enum_type, record_type)
 
         self.assertIs(document, returned)
         self.assertEqual([enum_type, record_type], document.graph)
+        serialized = document.as_salad()
+
+        self.assertEqual(
+            ['$namespaces', '$schemas', '$graph'],
+            list(serialized.keys()),
+        )
         self.assertEqual(
             {
-                '$base': 'https://example.org/',
                 '$namespaces': {'ex': 'https://example.org/ns#'},
+                '$schemas': ['https://example.org/schema.yaml'],
                 '$graph': [
                     {'type': 'enum', 'name': 'Status', 'symbols': ['open', 'closed']},
                     {'type': 'record', 'name': 'ExampleRecord', 'fields': []},
                 ],
             },
-            document.as_salad(),
+            serialized,
         )
 
 

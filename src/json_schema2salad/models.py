@@ -19,7 +19,7 @@ These models are aimed at *authoring* and *serializing* Salad schema
 documents from Python code without manually editing raw dictionaries.
 
 Covered Salad concepts:
-- top-level document with $base / $namespaces / $graph
+- top-level document with $namespaces / $schemas / $graph
 - primitive types
 - named type references
 - array types
@@ -100,6 +100,7 @@ class EnumType(SaladModel):
     name: str
     symbols: list[str]
     doc: str | None = None
+    json_ref_source: str | None = Field(default=None, exclude=True)
 
 
 class RecordField(SaladModel):
@@ -131,6 +132,7 @@ class RecordType(SaladModel):
     abstract: bool | None = None
     extends: str | list[str] | None = None
     specialize: list[SpecializeDef] | None = None
+    json_ref_source: str | None = Field(default=None, exclude=True)
 
     @field_validator("name")
     @classmethod
@@ -166,15 +168,14 @@ class SaladDocument(SaladModel):
     Top-level Schema Salad document.
 
     Example keys:
-      $base
       $namespaces
+      $schemas
       $graph
     """
 
-    base: str | None = Field(default=None, alias="$base")
     namespaces: dict[str, str] | None = Field(default=None, alias="$namespaces")
-    graph: list[EnumType | RecordType] = Field(default_factory=list, alias="$graph")
     schemas: list[str] | None = Field(default=None, alias="$schemas")
+    graph: list[EnumType | RecordType] = Field(default_factory=list, alias="$graph")
     comment: str | None = Field(default=None, alias="$comment")
 
     def add(self, *types: EnumType | RecordType) -> "SaladDocument":
