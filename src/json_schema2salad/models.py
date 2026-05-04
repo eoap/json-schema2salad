@@ -19,7 +19,8 @@ These models are aimed at *authoring* and *serializing* Salad schema
 documents from Python code without manually editing raw dictionaries.
 
 Covered Salad concepts:
-- top-level document with $namespaces / $schemas / $graph
+- top-level document with $namespaces / $graph
+- graph-level $import directives
 - primitive types
 - named type references
 - array types
@@ -95,6 +96,10 @@ class ArrayType(SaladModel):
     items: "TypeExpr"
 
 
+class ImportDirective(SaladModel):
+    import_: str = Field(alias="$import")
+
+
 class EnumType(SaladModel):
     type: Literal["enum"] = "enum"
     name: str
@@ -163,28 +168,30 @@ TypeExpr = TypeAliasType(
 )
 
 
+GraphEntry: TypeAlias = ImportDirective | EnumType | RecordType
+
+
 class SaladDocument(SaladModel):
     """
     Top-level Schema Salad document.
 
     Example keys:
       $namespaces
-      $schemas
       $graph
     """
 
     namespaces: dict[str, str] | None = Field(default=None, alias="$namespaces")
-    schemas: list[str] | None = Field(default=None, alias="$schemas")
-    graph: list[EnumType | RecordType] = Field(default_factory=list, alias="$graph")
+    graph: list[GraphEntry] = Field(default_factory=list, alias="$graph")
     comment: str | None = Field(default=None, alias="$comment")
 
-    def add(self, *types: EnumType | RecordType) -> "SaladDocument":
+    def add(self, *types: GraphEntry) -> "SaladDocument":
         self.graph.extend(types)
         return self
 
 
 # Resolve recursive annotations for Pydantic v2
 ArrayType.model_rebuild()
+ImportDirective.model_rebuild()
 EnumType.model_rebuild()
 RecordField.model_rebuild()
 RecordType.model_rebuild()

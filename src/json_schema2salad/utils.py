@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from httpx import Client
 from json_schema2salad import (
+    build_salad_document,
     convert_json_schema_to_salad_details,
     plan_conversion_names,
     ref_name_from_json_pointer,
@@ -139,7 +140,7 @@ class InlineSchemaMerger:
         self.type_index: dict[str, EnumType | RecordType] = {}
         self.type_source_index: dict[str, str] = {}
         self.source_ref_to_name: dict[str, str] = {}
-        self.imported_schemas: set[str] = set()
+        self.imported_schemas: dict[str, str] = {}
         self.warnings: list[str] = []
 
     def emit(self, sources: list[str]) -> SaladDocument:
@@ -148,14 +149,7 @@ class InlineSchemaMerger:
         for source in normalized_sources:
             self._merge_schema(source)
 
-        document = SaladDocument(
-            **{
-                "$namespaces": {"sld": "https://w3id.org/cwl/salad#"},
-                "$schemas": sorted(self.imported_schemas) if self.imported_schemas else None,
-                "$graph": self.graph_types,
-                "$comment": ("Warnings: " + " | ".join(self.warnings)) if self.warnings else None,
-            }
-        )
+        document = build_salad_document(self.imported_schemas, self.graph_types, self.warnings)
         serialize_salad_document(document, self.output_path)
         return document
 
@@ -207,17 +201,31 @@ class InlineSchemaMerger:
         merged_schema.merged = True
 
         self._merge_types(converted.document.graph)
-        if converted.document.schemas:
-            self.imported_schemas.update(converted.document.schemas)
+        self._merge_imported_schemas(converted.imported_schemas)
         self.source_ref_to_name.update(converted.source_ref_map)
         self.reserved_type_names.update(converted.ref_map.values())
         self.reserved_type_names.add(converted.root_name)
-        self.reserved_type_names.update(type_def.name for type_def in converted.document.graph)
+        self.reserved_type_names.update(
+            type_def.name
+            for type_def in converted.document.graph
+            if isinstance(type_def, (EnumType, RecordType))
+        )
         self._record_warnings(doc_uri, converted.warnings)
         return merged_schema
 
-    def _merge_types(self, types: list[EnumType | RecordType]) -> None:
+    def _merge_imported_schemas(self, imported_schemas: dict[str, str]) -> None:
+        for namespace, schema_uri in imported_schemas.items():
+            if namespace in self.imported_schemas and self.imported_schemas[namespace] != schema_uri:
+                raise ValueError(
+                    f"External schema namespace {namespace!r} maps to both "
+                    f"{self.imported_schemas[namespace]!r} and {schema_uri!r}."
+                )
+            self.imported_schemas[namespace] = schema_uri
+
+    def _merge_types(self, types: list[object]) -> None:
         for type_def in types:
+            if not isinstance(type_def, (EnumType, RecordType)):
+                continue
             source_ref = type_def.json_ref_source
             if source_ref and source_ref in self.type_source_index:
                 existing_name = self.type_source_index[source_ref]

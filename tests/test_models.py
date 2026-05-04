@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from json_schema2salad.models import (
     ArrayType,
     EnumType,
+    ImportDirective,
     RecordField,
     RecordType,
     SaladDocument,
@@ -136,31 +137,37 @@ class EnumAndArrayTypeTests(unittest.TestCase):
 
 
 class SaladDocumentTests(unittest.TestCase):
+    def test_import_directive_serializes_alias(self) -> None:
+        directive = ImportDirective(**{'$import': 'https://example.org/schema.yaml'})
+
+        self.assertEqual({'$import': 'https://example.org/schema.yaml'}, directive.as_salad())
+        self.assertEqual('https://example.org/schema.yaml', directive.import_)
+
     def test_add_appends_graph_entries_and_serializes_document_aliases(self) -> None:
+        import_directive = ImportDirective(**{'$import': 'https://example.org/schema.yaml'})
         enum_type = EnumType(name='Status', symbols=['open', 'closed'])
         record_type = RecordType(name='ExampleRecord')
         document = SaladDocument(
             **{
                 '$namespaces': {'ex': 'https://example.org/ns#'},
-                '$schemas': ['https://example.org/schema.yaml'],
             }
         )
 
-        returned = document.add(enum_type, record_type)
+        returned = document.add(import_directive, enum_type, record_type)
 
         self.assertIs(document, returned)
-        self.assertEqual([enum_type, record_type], document.graph)
+        self.assertEqual([import_directive, enum_type, record_type], document.graph)
         serialized = document.as_salad()
 
         self.assertEqual(
-            ['$namespaces', '$schemas', '$graph'],
+            ['$namespaces', '$graph'],
             list(serialized.keys()),
         )
         self.assertEqual(
             {
                 '$namespaces': {'ex': 'https://example.org/ns#'},
-                '$schemas': ['https://example.org/schema.yaml'],
                 '$graph': [
+                    {'$import': 'https://example.org/schema.yaml'},
                     {'type': 'enum', 'name': 'Status', 'symbols': ['open', 'closed']},
                     {'type': 'record', 'name': 'ExampleRecord', 'fields': []},
                 ],

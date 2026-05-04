@@ -26,6 +26,11 @@ import json_schema2salad.utils as utils
 import yaml
 
 
+STRING_FORMAT_SCHEMA_URI = "https://raw.githubusercontent.com/eoap/schemas/refs/heads/main/string_format.yaml"
+STRING_FORMAT_NAMESPACE_URI = f"{STRING_FORMAT_SCHEMA_URI}#"
+SALAD_NAMESPACE_URI = "https://w3id.org/cwl/salad#"
+
+
 class HttpxJsonLoaderTests(unittest.TestCase):
     def test_loader_uses_httpx_with_redirects_and_parses_json(self) -> None:
         payload = {"name": "example", "value": 1}
@@ -158,10 +163,18 @@ class MainCommandTests(unittest.TestCase):
             self.assertEqual(0, result.exit_code, result.output)
             merged_document = yaml.safe_load(output.read_text(encoding='utf-8'))
 
+        root_record = next(item for item in merged_document['$graph'] if item.get('name') == 'Root')
+
+        self.assertNotIn('$schemas', merged_document)
         self.assertEqual(
-            ['https://raw.githubusercontent.com/eoap/schemas/refs/heads/main/string_format.yaml'],
-            merged_document['$schemas'],
+            {
+                'sld': SALAD_NAMESPACE_URI,
+                'string_format': STRING_FORMAT_NAMESPACE_URI,
+            },
+            merged_document['$namespaces'],
         )
+        self.assertEqual({'$import': STRING_FORMAT_SCHEMA_URI}, merged_document['$graph'][0])
+        self.assertEqual('string_format:Date', root_record['fields'][0]['type'])
 
     def test_main_inlines_external_definition_refs_into_single_output_document(self) -> None:
         runner = CliRunner()

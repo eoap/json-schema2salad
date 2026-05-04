@@ -46,10 +46,12 @@ Limitations:
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
-from json_schema2salad.models import ArrayType, EnumType, RecordField, RecordType, SaladDocument
+from dataclasses import dataclass, field as dataclass_field
+from json_schema2salad.models import ArrayType, EnumType, ImportDirective, RecordField, RecordType, SaladDocument
+from pathlib import PurePosixPath
 from pydantic import BaseModel
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import unquote, urldefrag, urlparse
 
 import json
 import re
@@ -66,6 +68,8 @@ PRIMITIVE_MAP = {
 STRING_FORMAT_SCHEMA_URI = (
     "https://raw.githubusercontent.com/eoap/schemas/refs/heads/main/string_format.yaml"
 )
+
+SALAD_NAMESPACE_URI = "https://w3id.org/cwl/salad#"
 
 STRING_FORMAT_RECORDS = {
     "date": "Date",
@@ -111,6 +115,66 @@ def safe_name(name: str) -> str:
     if name[0].isdigit():
         name = "_" + name
     return name
+
+
+def external_schema_document_uri(schema_uri: str) -> str:
+    doc_uri, _ = urldefrag(schema_uri)
+    return doc_uri or schema_uri
+
+
+def external_schema_namespace(schema_uri: str) -> str:
+    doc_uri = external_schema_document_uri(schema_uri)
+    parsed = urlparse(doc_uri)
+    if parsed.path:
+        candidate = PurePosixPath(unquote(parsed.path)).stem
+    else:
+        candidate = parsed.netloc or doc_uri
+    return safe_name(candidate or "schema")
+
+
+def external_schema_namespace_uri(schema_uri: str) -> str:
+    return f"{external_schema_document_uri(schema_uri)}#"
+
+
+def register_external_schema_import(imported_schemas: dict[str, str], schema_uri: str) -> str:
+    doc_uri = external_schema_document_uri(schema_uri)
+    for namespace, imported_uri in imported_schemas.items():
+        if imported_uri == doc_uri:
+            return namespace
+
+    base_namespace = external_schema_namespace(doc_uri)
+    namespace = base_namespace
+    suffix = 2
+    while namespace in imported_schemas:
+        namespace = f"{base_namespace}_{suffix}"
+        suffix += 1
+    imported_schemas[namespace] = doc_uri
+    return namespace
+
+
+def build_salad_document(
+    imported_schemas: dict[str, str],
+    graph_types: list[EnumType | RecordType],
+    warnings: list[str],
+) -> SaladDocument:
+    namespaces = {"sld": SALAD_NAMESPACE_URI}
+    namespaces.update(
+        {
+            namespace: external_schema_namespace_uri(schema_uri)
+            for namespace, schema_uri in sorted(imported_schemas.items())
+        }
+    )
+    imports = [
+        ImportDirective(**{"$import": schema_uri})
+        for _, schema_uri in sorted(imported_schemas.items())
+    ]
+    return SaladDocument(
+        **{
+            "$namespaces": namespaces,
+            "$graph": imports + graph_types,
+            "$comment": ("Warnings: " + " | ".join(warnings)) if warnings else None,
+        }
+    )
 
 
 def stable_key(value: Any) -> str:
@@ -192,8 +256,8 @@ def string_format_type(schema: Dict[str, Any], ctx: "ConversionContext") -> str:
     if isinstance(format_name, str):
         record_name = STRING_FORMAT_RECORDS.get(format_name)
         if record_name:
-            ctx.import_schema(STRING_FORMAT_SCHEMA_URI)
-            return f"{STRING_FORMAT_SCHEMA_URI}#{record_name}"
+            namespace = ctx.import_schema(STRING_FORMAT_SCHEMA_URI)
+            return f"{namespace}:{record_name}"
     return PRIMITIVE_MAP["string"]
 
 
@@ -288,7 +352,7 @@ class ConversionContext:
         self.ref_map: Dict[str, str] = {}
         self.source_ref_to_name: dict[str, str] = dict(source_ref_to_name or {})
         self.inline_record_key_to_name: dict[str, str] = {}
-        self.imported_schemas: set[str] = set()
+        self.imported_schemas: dict[str, str] = {}
         self.warnings: List[str] = []
 
     def json_ref_source(self, ref: str | None = None) -> str | None:
@@ -352,8 +416,8 @@ class ConversionContext:
         if message not in self.warnings:
             self.warnings.append(message)
 
-    def import_schema(self, schema_uri: str) -> None:
-        self.imported_schemas.add(schema_uri)
+    def import_schema(self, schema_uri: str) -> str:
+        return register_external_schema_import(self.imported_schemas, schema_uri)
 
 
 @dataclass(frozen=True)
@@ -370,6 +434,7 @@ class ConvertedSchema:
     root_name: str
     ref_map: Dict[str, str]
     source_ref_map: Dict[str, str]
+    imported_schemas: dict[str, str] = dataclass_field(default_factory=dict)
 
 
 def ref_name_from_json_pointer(ref: str, ctx: ConversionContext) -> str:
@@ -722,18 +787,12 @@ def convert_json_schema_to_salad_details(
         }
         emit_record(wrapped_root, ctx, active_plan.root_name, source_ref=ctx.json_ref_source())
 
-    document = SaladDocument(
-        **{
-            "$namespaces": {"sld": "https://w3id.org/cwl/salad#"},
-            "$schemas": sorted(ctx.imported_schemas) if ctx.imported_schemas else None,
-            "$graph": ctx.types,
-            "$comment": ("Warnings: " + " | ".join(ctx.warnings)) if ctx.warnings else None,
-        }
-    )
+    document = build_salad_document(ctx.imported_schemas, ctx.types, ctx.warnings)
     return ConvertedSchema(
         document=document,
         warnings=ctx.warnings,
         root_name=active_plan.root_name,
         ref_map=dict(ctx.ref_map),
         source_ref_map=dict(ctx.source_ref_to_name),
+        imported_schemas=dict(ctx.imported_schemas),
     )

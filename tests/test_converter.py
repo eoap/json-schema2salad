@@ -19,9 +19,12 @@ from json_schema2salad import (
     convert_json_schema_to_salad_details,
     plan_conversion_names,
 )
+from json_schema2salad.models import ImportDirective
 
 
 STRING_FORMAT_SCHEMA_URI = "https://raw.githubusercontent.com/eoap/schemas/refs/heads/main/string_format.yaml"
+STRING_FORMAT_NAMESPACE_URI = f"{STRING_FORMAT_SCHEMA_URI}#"
+SALAD_NAMESPACE_URI = "https://w3id.org/cwl/salad#"
 
 
 class ConversionDocumentationTests(unittest.TestCase):
@@ -68,6 +71,17 @@ class ConversionDocumentationTests(unittest.TestCase):
 
 
 class StringFormatConversionTests(unittest.TestCase):
+    def assert_imports_string_format_schema(self, document) -> None:
+        self.assertEqual(
+            {
+                'sld': SALAD_NAMESPACE_URI,
+                'string_format': STRING_FORMAT_NAMESPACE_URI,
+            },
+            document.namespaces,
+        )
+        self.assertIsInstance(document.graph[0], ImportDirective)
+        self.assertEqual(STRING_FORMAT_SCHEMA_URI, document.graph[0].import_)
+
     def test_string_format_maps_to_eoap_salad_reference(self) -> None:
         schema = {
             'title': 'Root',
@@ -82,12 +96,12 @@ class StringFormatConversionTests(unittest.TestCase):
         }
 
         document, warnings = convert_json_schema_to_salad(schema)
-        root_record = next(type_def for type_def in document.graph if type_def.name == 'Root')
+        root_record = next(type_def for type_def in document.graph if getattr(type_def, 'name', None) == 'Root')
         field = root_record.fields[0]
 
         self.assertEqual([], warnings)
-        self.assertEqual([STRING_FORMAT_SCHEMA_URI], document.schemas)
-        self.assertEqual(f'{STRING_FORMAT_SCHEMA_URI}#Date', field.type)
+        self.assert_imports_string_format_schema(document)
+        self.assertEqual('string_format:Date', field.type)
 
     def test_string_format_applies_inside_arrays_and_nullable_unions(self) -> None:
         schema = {
@@ -110,14 +124,14 @@ class StringFormatConversionTests(unittest.TestCase):
         }
 
         document, warnings = convert_json_schema_to_salad(schema)
-        root_record = next(type_def for type_def in document.graph if type_def.name == 'Root')
+        root_record = next(type_def for type_def in document.graph if getattr(type_def, 'name', None) == 'Root')
         timestamps = next(field for field in root_record.fields if field.name == 'timestamps')
         callback = next(field for field in root_record.fields if field.name == 'callback')
 
         self.assertEqual([], warnings)
-        self.assertEqual([STRING_FORMAT_SCHEMA_URI], document.schemas)
-        self.assertEqual(f'{STRING_FORMAT_SCHEMA_URI}#DateTime', timestamps.type.items)
-        self.assertEqual([f'{STRING_FORMAT_SCHEMA_URI}#URI', 'null'], callback.type)
+        self.assert_imports_string_format_schema(document)
+        self.assertEqual('string_format:DateTime', timestamps.type.items)
+        self.assertEqual(['string_format:URI', 'null'], callback.type)
 
     def test_plain_strings_do_not_import_string_format_schema(self) -> None:
         schema = {
@@ -134,7 +148,8 @@ class StringFormatConversionTests(unittest.TestCase):
         name = next(field for field in root_record.fields if field.name == 'name')
 
         self.assertEqual([], warnings)
-        self.assertIsNone(document.schemas)
+        self.assertEqual({'sld': SALAD_NAMESPACE_URI}, document.namespaces)
+        self.assertNotIsInstance(document.graph[0], ImportDirective)
         self.assertEqual('string', name.type)
 
     def test_all_eoap_string_formats_are_supported(self) -> None:
@@ -173,14 +188,14 @@ class StringFormatConversionTests(unittest.TestCase):
         }
 
         document, warnings = convert_json_schema_to_salad(schema)
-        root_record = next(type_def for type_def in document.graph if type_def.name == 'Root')
+        root_record = next(type_def for type_def in document.graph if getattr(type_def, 'name', None) == 'Root')
         fields_by_name = {field.name: field for field in root_record.fields}
 
         self.assertEqual([], warnings)
-        self.assertEqual([STRING_FORMAT_SCHEMA_URI], document.schemas)
+        self.assert_imports_string_format_schema(document)
         for format_name, record_name in expected_refs.items():
             field_name = format_name.replace('-', '_')
-            self.assertEqual(f'{STRING_FORMAT_SCHEMA_URI}#{record_name}', fields_by_name[field_name].type)
+            self.assertEqual(f'string_format:{record_name}', fields_by_name[field_name].type)
 
 
 class RecordNamingTests(unittest.TestCase):
