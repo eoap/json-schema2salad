@@ -47,7 +47,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field as dataclass_field
-from json_schema2salad.models import ArrayType, EnumType, ImportDirective, RecordField, RecordType, SaladDocument
+from json_schema2salad.models import (
+    ArrayType,
+    EnumType,
+    ImportDirective,
+    RecordField,
+    RecordType,
+    SaladDocument,
+)
 from pathlib import PurePosixPath
 from pydantic import BaseModel
 from typing import Any, Callable, Dict, List, Optional
@@ -100,6 +107,7 @@ GENERIC_ROOT_TITLES = {"root"}
 # Utilities
 # ---------------------------------------------------------------------------
 
+
 def to_camel_case(name: str) -> str:
     parts = re.split(r"[^A-Za-z0-9]+", name)
     parts = [p for p in parts if p]
@@ -136,7 +144,9 @@ def external_schema_namespace_uri(schema_uri: str) -> str:
     return f"{external_schema_document_uri(schema_uri)}#"
 
 
-def register_external_schema_import(imported_schemas: dict[str, str], schema_uri: str) -> str:
+def register_external_schema_import(
+    imported_schemas: dict[str, str], schema_uri: str
+) -> str:
     doc_uri = external_schema_document_uri(schema_uri)
     for namespace, imported_uri in imported_schemas.items():
         if imported_uri == doc_uri:
@@ -181,7 +191,10 @@ def stable_key(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return json.dumps(value, sort_keys=True)
     if isinstance(value, BaseModel):
-        return json.dumps(value.model_dump(mode="json", by_alias=True, exclude_none=True), sort_keys=True)
+        return json.dumps(
+            value.model_dump(mode="json", by_alias=True, exclude_none=True),
+            sort_keys=True,
+        )
     return str(value)
 
 
@@ -261,7 +274,9 @@ def string_format_type(schema: Dict[str, Any], ctx: "ConversionContext") -> str:
     return PRIMITIVE_MAP["string"]
 
 
-def primitive_type_to_salad(json_type: str, schema: Dict[str, Any], ctx: "ConversionContext") -> str:
+def primitive_type_to_salad(
+    json_type: str, schema: Dict[str, Any], ctx: "ConversionContext"
+) -> str:
     if json_type == "string":
         return string_format_type(schema, ctx)
     return PRIMITIVE_MAP[json_type]
@@ -285,7 +300,9 @@ def inline_record_identity_key(schema: Dict[str, Any]) -> str | None:
     return stable_key(schema)
 
 
-def preferred_root_name(schema: Dict[str, Any], root_name_hint: str | None = None) -> str:
+def preferred_root_name(
+    schema: Dict[str, Any], root_name_hint: str | None = None
+) -> str:
     title_name = schema_title_name(schema)
     if title_name:
         if title_name.lower() not in GENERIC_ROOT_TITLES:
@@ -325,14 +342,14 @@ def json_pointer_parts(fragment: str) -> List[str]:
     if not fragment.startswith("/"):
         raise ValueError(f"Unsupported JSON Pointer fragment: {fragment!r}")
     return [
-        part.replace("~1", "/").replace("~0", "~")
-        for part in fragment[1:].split("/")
+        part.replace("~1", "/").replace("~0", "~") for part in fragment[1:].split("/")
     ]
 
 
 # ---------------------------------------------------------------------------
 # Conversion context
 # ---------------------------------------------------------------------------
+
 
 class ConversionContext:
     def __init__(
@@ -397,7 +414,9 @@ class ConversionContext:
             self.emitted_names.add(existing_name)
             return existing_name
 
-        record_name = self.reserve_name(preferred_record_name(schema, fallback), source_ref=source_ref)
+        record_name = self.reserve_name(
+            preferred_record_name(schema, fallback), source_ref=source_ref
+        )
         if inline_key:
             self.inline_record_key_to_name[inline_key] = record_name
         return record_name
@@ -440,7 +459,9 @@ class ConvertedSchema:
 def ref_name_from_json_pointer(ref: str, ctx: ConversionContext) -> str:
     if ref not in ctx.ref_map:
         source_ref = ctx.json_ref_source(ref)
-        ctx.ref_map[ref] = ctx.reserve_name(suggested_name_from_ref(ref), source_ref=source_ref)
+        ctx.ref_map[ref] = ctx.reserve_name(
+            suggested_name_from_ref(ref), source_ref=source_ref
+        )
     return ctx.ref_map[ref]
 
 
@@ -454,7 +475,10 @@ def suggested_name_from_ref(ref: str) -> str:
 
 
 def predeclare_defs(schema: Dict[str, Any], ctx: ConversionContext) -> None:
-    for bucket_name, ref_prefix in (("$defs", "#/$defs/"), ("definitions", "#/definitions/")):
+    for bucket_name, ref_prefix in (
+        ("$defs", "#/$defs/"),
+        ("definitions", "#/definitions/"),
+    ):
         defs = schema.get(bucket_name, {})
         for def_name, def_schema in defs.items():
             ref = f"{ref_prefix}{def_name}"
@@ -581,35 +605,56 @@ def materialize_allof_record(
             name=record_name,
             json_ref_source=source_ref,
             doc=merge_descriptions(descriptions),
-            fields=[RecordField(name="value", type="Any", doc="Lossy fallback for unsupported allOf branch composition.")],
+            fields=[
+                RecordField(
+                    name="value",
+                    type="Any",
+                    doc="Lossy fallback for unsupported allOf branch composition.",
+                )
+            ],
         )
         ctx.add_type(fallback)
         ctx.warn(f"Unsupported non-object allOf branch under record {record_name}")
         return record_name
 
-    merged_inline = merge_object_schemas(inline_objects) if inline_objects else {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    }
+    merged_inline = (
+        merge_object_schemas(inline_objects)
+        if inline_objects
+        else {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
+    )
 
     record = RecordType(
         name=record_name,
         json_ref_source=source_ref,
         doc=merge_descriptions(descriptions + [schema_doc(merged_inline)]),
-        extends=ref_bases if len(ref_bases) > 1 else (ref_bases[0] if ref_bases else None),
+        extends=ref_bases
+        if len(ref_bases) > 1
+        else (ref_bases[0] if ref_bases else None),
         fields=[],
     )
 
     required_fields = set(merged_inline.get("required", []))
     for prop_name, prop_schema in merged_inline.get("properties", {}).items():
-        record.fields.append(make_field(prop_name, prop_schema, prop_name in required_fields, ctx, record_name))
+        record.fields.append(
+            make_field(
+                prop_name, prop_schema, prop_name in required_fields, ctx, record_name
+            )
+        )
 
     ctx.add_type(record)
     return record_name
 
 
-def convert_type(schema: Dict[str, Any], ctx: ConversionContext, parent_name: str, field_name: Optional[str] = None) -> Any:
+def convert_type(
+    schema: Dict[str, Any],
+    ctx: ConversionContext,
+    parent_name: str,
+    field_name: Optional[str] = None,
+) -> Any:
     if "$ref" in schema:
         return resolve_ref_name(schema["$ref"], ctx)
 
@@ -620,7 +665,9 @@ def convert_type(schema: Dict[str, Any], ctx: ConversionContext, parent_name: st
         return convert_union_variants(schema["anyOf"], ctx, parent_name, field_name)
 
     if "allOf" in schema:
-        nested_name = ctx.reserve_record_name(schema, f"{parent_name}_{field_name or 'Composed'}")
+        nested_name = ctx.reserve_record_name(
+            schema, f"{parent_name}_{field_name or 'Composed'}"
+        )
         materialize_allof_record(schema, ctx, nested_name)
         return nested_name
 
@@ -643,12 +690,16 @@ def convert_type(schema: Dict[str, Any], ctx: ConversionContext, parent_name: st
             if isinstance(t, str) and t in PRIMITIVE_MAP:
                 converted.append(primitive_type_to_salad(t, schema, ctx))
             elif t == "object":
-                nested_name = ctx.reserve_record_name(schema, f"{parent_name}_{field_name or 'Nested'}")
+                nested_name = ctx.reserve_record_name(
+                    schema, f"{parent_name}_{field_name or 'Nested'}"
+                )
                 emit_record(schema, ctx, nested_name)
                 converted.append(nested_name)
             elif t == "array":
                 items = schema.get("items", {})
-                converted.append(ArrayType(items=convert_type(items, ctx, parent_name, field_name)))
+                converted.append(
+                    ArrayType(items=convert_type(items, ctx, parent_name, field_name))
+                )
             else:
                 converted.append("Any")
                 ctx.warn(f"Unsupported type variant {t!r} under {parent_name}")
@@ -662,22 +713,36 @@ def convert_type(schema: Dict[str, Any], ctx: ConversionContext, parent_name: st
         return ArrayType(items=convert_type(items, ctx, parent_name, field_name))
 
     if schema_type == "object" or "properties" in schema:
-        nested_name = ctx.reserve_record_name(schema, f"{parent_name}_{field_name or 'Nested'}")
+        nested_name = ctx.reserve_record_name(
+            schema, f"{parent_name}_{field_name or 'Nested'}"
+        )
         emit_record(schema, ctx, nested_name)
         return nested_name
 
     if schema_type is None:
         if "properties" in schema:
-            nested_name = ctx.reserve_record_name(schema, f"{parent_name}_{field_name or 'Nested'}")
+            nested_name = ctx.reserve_record_name(
+                schema, f"{parent_name}_{field_name or 'Nested'}"
+            )
             emit_record(schema, ctx, nested_name)
             return nested_name
         if "items" in schema:
-            return ArrayType(items=convert_type(schema.get("items", {}), ctx, parent_name, field_name))
+            return ArrayType(
+                items=convert_type(
+                    schema.get("items", {}), ctx, parent_name, field_name
+                )
+            )
 
     return "Any"
 
 
-def make_field(field_name: str, field_schema: Dict[str, Any], required: bool, ctx: ConversionContext, parent_name: str) -> RecordField:
+def make_field(
+    field_name: str,
+    field_schema: Dict[str, Any],
+    required: bool,
+    ctx: ConversionContext,
+    parent_name: str,
+) -> RecordField:
     field_type = convert_type(field_schema, ctx, parent_name, field_name)
     if not required:
         union = ensure_union(field_type)
@@ -709,20 +774,33 @@ def emit_record(
     properties = schema.get("properties", {})
     required_fields = set(schema.get("required", []))
 
-    record = RecordType(name=record_name, json_ref_source=source_ref, doc=schema_doc(schema), fields=[])
+    record = RecordType(
+        name=record_name, json_ref_source=source_ref, doc=schema_doc(schema), fields=[]
+    )
     for prop_name, prop_schema in properties.items():
-        record.fields.append(make_field(prop_name, prop_schema, prop_name in required_fields, ctx, record_name))
+        record.fields.append(
+            make_field(
+                prop_name, prop_schema, prop_name in required_fields, ctx, record_name
+            )
+        )
     ctx.add_type(record)
 
 
 def emit_defs(schema: Dict[str, Any], ctx: ConversionContext) -> None:
-    for bucket_name, ref_prefix in (("$defs", "#/$defs/"), ("definitions", "#/definitions/")):
+    for bucket_name, ref_prefix in (
+        ("$defs", "#/$defs/"),
+        ("definitions", "#/definitions/"),
+    ):
         defs = schema.get(bucket_name, {})
         for def_name, def_schema in defs.items():
             ref = f"{ref_prefix}{def_name}"
             source_ref = ctx.json_ref_source(ref)
             salad_name = ref_name_from_json_pointer(ref, ctx)
-            if def_schema.get("type") == "object" or "properties" in def_schema or "allOf" in def_schema:
+            if (
+                def_schema.get("type") == "object"
+                or "properties" in def_schema
+                or "allOf" in def_schema
+            ):
                 emit_record(def_schema, ctx, salad_name, source_ref=source_ref)
             elif "enum" in def_schema:
                 ctx.add_type(
@@ -738,12 +816,17 @@ def emit_defs(schema: Dict[str, Any], ctx: ConversionContext) -> None:
                     "type": "object",
                     "properties": {"value": deepcopy(def_schema)},
                     "required": ["value"],
-                    "description": def_schema.get("description", def_schema.get("title", f"Wrapped definition for {def_name}")),
+                    "description": def_schema.get(
+                        "description",
+                        def_schema.get("title", f"Wrapped definition for {def_name}"),
+                    ),
                 }
                 emit_record(wrapped, ctx, salad_name, source_ref=source_ref)
 
 
-def convert_json_schema_to_salad(schema: Dict[str, Any]) -> tuple[SaladDocument, List[str]]:
+def convert_json_schema_to_salad(
+    schema: Dict[str, Any],
+) -> tuple[SaladDocument, List[str]]:
     converted = convert_json_schema_to_salad_details(schema)
     return converted.document, converted.warnings
 
@@ -777,15 +860,21 @@ def convert_json_schema_to_salad_details(
     emit_defs(schema, ctx)
 
     if schema.get("type") == "object" or "properties" in schema or "allOf" in schema:
-        emit_record(schema, ctx, active_plan.root_name, source_ref=ctx.json_ref_source())
+        emit_record(
+            schema, ctx, active_plan.root_name, source_ref=ctx.json_ref_source()
+        )
     else:
         wrapped_root = {
             "type": "object",
             "properties": {"value": deepcopy(schema)},
             "required": ["value"],
-            "description": schema.get("description", schema.get("title", "Wrapped non-object root schema")),
+            "description": schema.get(
+                "description", schema.get("title", "Wrapped non-object root schema")
+            ),
         }
-        emit_record(wrapped_root, ctx, active_plan.root_name, source_ref=ctx.json_ref_source())
+        emit_record(
+            wrapped_root, ctx, active_plan.root_name, source_ref=ctx.json_ref_source()
+        )
 
     document = build_salad_document(ctx.imported_schemas, ctx.types, ctx.warnings)
     return ConvertedSchema(

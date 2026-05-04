@@ -113,7 +113,9 @@ class RecordField(SaladModel):
     type_: "TypeExpr" = Field(alias="type")
     doc: str | None = None
     default: Any | None = None
-    jsonld_predicate: str | dict[str, Any] | None = Field(default=None, alias="jsonldPredicate")
+    jsonld_predicate: str | dict[str, Any] | None = Field(
+        default=None, alias="jsonldPredicate"
+    )
 
     @field_validator("name")
     @classmethod
@@ -159,12 +161,7 @@ NamedTypeRef: TypeAlias = Annotated[str, Field(min_length=1)]
 # - union type as a list of type expressions
 TypeExpr = TypeAliasType(
     "TypeExpr",
-    PrimitiveType
-    | NamedTypeRef
-    | ArrayType
-    | EnumType
-    | RecordType
-    | list["TypeExpr"],
+    PrimitiveType | NamedTypeRef | ArrayType | EnumType | RecordType | list["TypeExpr"],
 )
 
 

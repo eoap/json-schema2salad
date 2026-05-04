@@ -49,7 +49,9 @@ def main(
         normalized_sources = [normalize_source_uri(source) for source in sources]
         for source in normalized_sources:
             logger.info(f"Reading JSON Schema from {source}...")
-        logger.info("Transpiling JSON Schemas and recursively inlining referenced schemas...")
+        logger.info(
+            "Transpiling JSON Schemas and recursively inlining referenced schemas..."
+        )
 
         output.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"Merged Schema Salad will be serialized to {output.resolve()}")
@@ -64,7 +66,9 @@ def main(
         logger.success(
             "------------------------------------------------------------------------"
         )
-        logger.success(f"SUCCESS Schema Salad(s) successfully serialized to {output.resolve()}.")
+        logger.success(
+            f"SUCCESS Schema Salad(s) successfully serialized to {output.resolve()}."
+        )
         logger.success(
             "------------------------------------------------------------------------"
         )

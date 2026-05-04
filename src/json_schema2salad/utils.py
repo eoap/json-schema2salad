@@ -80,7 +80,11 @@ def resolve_reference_uri(base_uri: str, ref: str) -> str:
     if parsed_base.scheme in {"http", "https", "file"}:
         return urljoin(base_doc_uri, ref)
 
-    resolved_doc_uri = str((Path(base_doc_uri).parent / ref_doc_uri).resolve()) if ref_doc_uri else base_doc_uri
+    resolved_doc_uri = (
+        str((Path(base_doc_uri).parent / ref_doc_uri).resolve())
+        if ref_doc_uri
+        else base_doc_uri
+    )
     return f"{resolved_doc_uri}{ref_fragment}"
 
 
@@ -114,7 +118,9 @@ def safe_output_stem(source_uri: str) -> str:
     else:
         candidate = Path(source_uri).stem or "schema"
 
-    sanitized = "".join(char if char.isalnum() or char in "._-" else "_" for char in candidate).strip("._-")
+    sanitized = "".join(
+        char if char.isalnum() or char in "._-" else "_" for char in candidate
+    ).strip("._-")
     return sanitized or "schema"
 
 
@@ -149,7 +155,9 @@ class InlineSchemaMerger:
         for source in normalized_sources:
             self._merge_schema(source)
 
-        document = build_salad_document(self.imported_schemas, self.graph_types, self.warnings)
+        document = build_salad_document(
+            self.imported_schemas, self.graph_types, self.warnings
+        )
         serialize_salad_document(document, self.output_path)
         return document
 
@@ -187,10 +195,12 @@ class InlineSchemaMerger:
             schema,
             base_uri=doc_uri,
             plan=plan,
-            external_ref_handler=lambda ref, ctx, current_doc_uri=doc_uri: self._resolve_external_ref(
-                ref,
-                ctx,
-                current_doc_uri,
+            external_ref_handler=lambda ref, ctx, current_doc_uri=doc_uri: (
+                self._resolve_external_ref(
+                    ref,
+                    ctx,
+                    current_doc_uri,
+                )
             ),
             reserved_names=self.reserved_type_names,
         )
@@ -215,7 +225,10 @@ class InlineSchemaMerger:
 
     def _merge_imported_schemas(self, imported_schemas: dict[str, str]) -> None:
         for namespace, schema_uri in imported_schemas.items():
-            if namespace in self.imported_schemas and self.imported_schemas[namespace] != schema_uri:
+            if (
+                namespace in self.imported_schemas
+                and self.imported_schemas[namespace] != schema_uri
+            ):
                 raise ValueError(
                     f"External schema namespace {namespace!r} maps to both "
                     f"{self.imported_schemas[namespace]!r} and {schema_uri!r}."
