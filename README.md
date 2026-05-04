@@ -18,4 +18,4 @@ pip install json-schema2salad
 
 ## License
 
-`json-schema2salad` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
+`json-schema2salad` is distributed under the terms of the [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) license.
