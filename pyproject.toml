@@ -30,7 +30,7 @@ dependencies = [
   "jsonref==1.1.0",
   "jsonpointer==3.0.0",
   "loguru==0.7.3",
-  "pydantic==2.12.5",
+  "pydantic==2.13.3",
   "typing_extensions>=4.0",
   "PyYAML==6.0.3"
 ]
