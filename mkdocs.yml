@@ -71,7 +71,15 @@ extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
-  - 'index.md'
-  - 'cli.md'
+  - Home: index.md
+  - Tutorials:
+      - Convert your first schema: tutorials/first-conversion.md
+  - How-to guides:
+      - Convert schemas: how-to/convert-schemas.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Conversion rules: reference/conversion-rules.md
+  - Explanation:
+      - Conversion model and scope: explanation/conversion-model.md
 
 copyright: <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%20License%202.0-blue"" alt="Apache License, Version 2.0" /></a>
