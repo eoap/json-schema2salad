@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://eoap.github.io/json-schema2salad/</loc>
+         <lastmod>2026-05-05</lastmod>
+    </url>
+    <url>
+         <loc>https://eoap.github.io/json-schema2salad/explanation/conversion-model/</loc>
+         <lastmod>2026-05-05</lastmod>
+    </url>
+    <url>
+         <loc>https://eoap.github.io/json-schema2salad/how-to/convert-schemas/</loc>
+         <lastmod>2026-05-05</lastmod>
+    </url>
+    <url>
+         <loc>https://eoap.github.io/json-schema2salad/reference/cli/</loc>
+         <lastmod>2026-05-05</lastmod>
+    </url>
+    <url>
+         <loc>https://eoap.github.io/json-schema2salad/reference/conversion-rules/</loc>
+         <lastmod>2026-05-05</lastmod>
+    </url>
+    <url>
+         <loc>https://eoap.github.io/json-schema2salad/tutorials/first-conversion/</loc>
+         <lastmod>2026-05-05</lastmod>
+    </url>
+</urlset>
