@@ -12,3 +12,4 @@ tests/*/current.*
 tests/*/*.puml
 /.pytest_cache/
 docs/api
+uv.lock
