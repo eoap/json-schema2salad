@@ -19,12 +19,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import yaml
 from click.testing import CliRunner
 
 import json_schema2salad.cli as cli
 import json_schema2salad.utils as utils
-import yaml
-
 
 STRING_FORMAT_SCHEMA_URI = (
     "https://raw.githubusercontent.com/eoap/schemas/refs/heads/main/string_format.yaml"

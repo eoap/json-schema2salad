@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
-from json_schema2salad.utils import InlineSchemaMerger, normalize_source_uri
-from loguru import logger
 from pathlib import Path
 
 import click
-import time
+from loguru import logger
+
+from json_schema2salad.utils import InlineSchemaMerger, normalize_source_uri
 
 
 @click.command(context_settings={"show_default": True})

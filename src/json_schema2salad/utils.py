@@ -15,19 +15,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+from urllib.parse import unquote, urldefrag, urljoin, urlparse
+
+import yaml
 from httpx import Client
+from loguru import logger
+
 from json_schema2salad import (
+    ConversionContext,
     build_salad_document,
     convert_json_schema_to_salad_details,
     plan_conversion_names,
     ref_name_from_json_pointer,
 )
 from json_schema2salad.models import EnumType, RecordType, SaladDocument
-from loguru import logger
-from pathlib import Path
-from urllib.parse import unquote, urldefrag, urljoin, urlparse
 
-import yaml
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def httpx_json_loader(uri: str, **kwargs: object) -> object:
@@ -191,17 +197,15 @@ class InlineSchemaMerger:
         self.merged_schemas[doc_uri] = merged_schema
 
         logger.info(f"Schema {doc_uri} will be inlined into {self.output_path}")
+
+        def resolve_external_ref(ref: str, ctx: ConversionContext) -> str:
+            return self._resolve_external_ref(ref, ctx, doc_uri)
+
         converted = convert_json_schema_to_salad_details(
             schema,
             base_uri=doc_uri,
             plan=plan,
-            external_ref_handler=lambda ref, ctx, current_doc_uri=doc_uri: (
-                self._resolve_external_ref(
-                    ref,
-                    ctx,
-                    current_doc_uri,
-                )
-            ),
+            external_ref_handler=resolve_external_ref,
             reserved_names=self.reserved_type_names,
         )
 
@@ -235,7 +239,7 @@ class InlineSchemaMerger:
                 )
             self.imported_schemas[namespace] = schema_uri
 
-    def _merge_types(self, types: list[object]) -> None:
+    def _merge_types(self, types: Sequence[object]) -> None:
         for type_def in types:
             if not isinstance(type_def, (EnumType, RecordType)):
                 continue
@@ -274,7 +278,7 @@ class InlineSchemaMerger:
     def _resolve_external_ref(
         self,
         ref: str,
-        ctx: object,
+        ctx: ConversionContext,
         current_doc_uri: str,
     ) -> str:
         resolved_ref = resolve_reference_uri(current_doc_uri, ref)

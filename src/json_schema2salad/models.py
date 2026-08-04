@@ -45,7 +45,6 @@ from typing import Annotated, Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import TypeAliasType
 
-
 PrimitiveType: TypeAlias = Literal[
     "null",
     "boolean",
@@ -93,7 +92,7 @@ class SpecializeDef(SaladModel):
 
 class ArrayType(SaladModel):
     type: Literal["array"] = "array"
-    items: "TypeExpr"
+    items: TypeExpr  # type: ignore[misc]  # mypy cannot resolve this model cycle
 
 
 class ImportDirective(SaladModel):
@@ -110,7 +109,7 @@ class EnumType(SaladModel):
 
 class RecordField(SaladModel):
     name: str
-    type_: "TypeExpr" = Field(alias="type")
+    type_: TypeExpr = Field(alias="type")  # type: ignore[misc]
     doc: str | None = None
     default: Any | None = None
     jsonld_predicate: str | dict[str, Any] | None = Field(
@@ -126,7 +125,7 @@ class RecordField(SaladModel):
         return value
 
     @property
-    def type(self) -> "TypeExpr":
+    def type(self) -> TypeExpr:  # type: ignore[misc]
         """Convenience access mirroring the Salad key name."""
         return self.type_
 
@@ -159,9 +158,9 @@ NamedTypeRef: TypeAlias = Annotated[str, Field(min_length=1)]
 # - enum type
 # - record type
 # - union type as a list of type expressions
-TypeExpr = TypeAliasType(
+TypeExpr = TypeAliasType(  # type: ignore[misc]
     "TypeExpr",
-    PrimitiveType | NamedTypeRef | ArrayType | EnumType | RecordType | list["TypeExpr"],
+    PrimitiveType | NamedTypeRef | ArrayType | EnumType | RecordType | list["TypeExpr"],  # type: ignore[misc]
 )
 
 
@@ -181,7 +180,7 @@ class SaladDocument(SaladModel):
     graph: list[GraphEntry] = Field(default_factory=list, alias="$graph")
     comment: str | None = Field(default=None, alias="$comment")
 
-    def add(self, *types: GraphEntry) -> "SaladDocument":
+    def add(self, *types: GraphEntry) -> SaladDocument:
         self.graph.extend(types)
         return self
 

@@ -21,7 +21,6 @@ from json_schema2salad import (
 )
 from json_schema2salad.models import ImportDirective
 
-
 STRING_FORMAT_SCHEMA_URI = (
     "https://raw.githubusercontent.com/eoap/schemas/refs/heads/main/string_format.yaml"
 )
